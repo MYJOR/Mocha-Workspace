@@ -1,0 +1,25 @@
+# CMake / build
+build/
+cmake-build-*/
+out/
+CMakeUserPresets.json
+
+# Generated / local
+compile_commands.json
+.cache/
+*.o
+*.a
+*.dylib
+*.so
+*.exe
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
+
+# ImGui state (often copied next to binary)
+imgui.ini
+
+# Cursor (local plans and machine state)
+.cursor/
