@@ -43,15 +43,15 @@ static void computeLighting(float azimuthDeg, float elevationDeg, LightingParams
     constexpr float nightSun[]     = {0.0f,  0.0f,  0.0f};
     constexpr float nightAmbient[] = {0.02f, 0.02f, 0.04f};
 
-    constexpr float sunsetZenith[]  = {0.15f, 0.20f, 0.50f};
-    constexpr float sunsetHorizon[] = {0.90f, 0.40f, 0.15f};
-    constexpr float sunsetSun[]     = {2.50f, 1.00f, 0.30f};
-    constexpr float sunsetAmbient[] = {0.10f, 0.08f, 0.06f};
+    constexpr float sunsetZenith[]  = {0.12f, 0.18f, 0.55f};
+    constexpr float sunsetHorizon[] = {1.00f, 0.42f, 0.10f};
+    constexpr float sunsetSun[]     = {2.80f, 0.90f, 0.25f};
+    constexpr float sunsetAmbient[] = {0.10f, 0.07f, 0.05f};
 
-    constexpr float dayZenith[]  = {0.60f, 0.75f, 0.95f};
-    constexpr float dayHorizon[] = {0.85f, 0.85f, 0.90f};
-    constexpr float daySun[]     = {2.50f, 2.20f, 1.80f};
-    constexpr float dayAmbient[] = {0.15f, 0.18f, 0.25f};
+    constexpr float dayZenith[]  = {0.45f, 0.65f, 1.00f};
+    constexpr float dayHorizon[] = {0.80f, 0.82f, 0.95f};
+    constexpr float daySun[]     = {2.80f, 2.40f, 1.80f};
+    constexpr float dayAmbient[] = {0.12f, 0.18f, 0.30f};
 
     float horizonFade = smoothstepf(-10.0f, 0.0f, elevationDeg);
     float dayFade     = smoothstepf(0.0f, 30.0f, elevationDeg);
@@ -97,6 +97,7 @@ struct AppState {
 
     float exposure       = 1.0f;
     float targetExposure = 1.0f;
+    float saturation     = 1.15f;
 
     int  frameIndex   = 0;
     bool needRegen    = true;
@@ -193,7 +194,7 @@ int main() {
         glBindFramebuffer(GL_FRAMEBUFFER, 0);
         glViewport(0, 0, fbW, fbH);
         glClear(GL_COLOR_BUFFER_BIT);
-        app.renderer.drawFullscreenQuad(app.exposure);
+        app.renderer.drawFullscreenQuad(app.exposure, app.saturation);
 
         ImGui_ImplOpenGL3_NewFrame();
         ImGui_ImplGlfw_NewFrame();
@@ -231,6 +232,9 @@ int main() {
             app.targetExposure = computeTargetExposure(app.sunElevation);
             app.frameIndex = 0;
         }
+
+        ImGui::SeparatorText("Display");
+        ImGui::SliderFloat("Saturation", &app.saturation, 0.5f, 2.0f);
 
         ImGui::SeparatorText("Denoiser (A-Trous)");
         ImGui::SliderFloat("Sigma Color", &app.denoiseParams.sigmaColor, 0.01f, 2.0f);

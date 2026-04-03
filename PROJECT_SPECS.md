@@ -3,7 +3,7 @@
 ## 1) Project Summary
 
 IsometricPathTracer is a real-time, GPU-driven isometric path tracing demo written in C++17 and OpenGL 4.1.  
-The application renders a procedural voxel-like terrain composed of axis-aligned cubes, applies temporal accumulation and A-Trous denoising, then displays the result with ACES tonemapping.
+The application renders a procedural voxel-like terrain composed of axis-aligned cubes, applies temporal accumulation and A-Trous denoising, then displays the result with elevation-driven auto exposure, ACES tonemapping, and gamma correction.
 
 Primary goals:
 
@@ -61,6 +61,7 @@ Linked targets:
 - `src/main.cpp`
   - Application lifecycle and render loop.
   - ImGui controls and change detection.
+  - Derives target exposure from sun elevation and smooths display exposure over time.
   - Calls generation, tracing, accumulation, denoise, and present passes in order.
 
 - `src/Camera.h/.cpp`
@@ -96,7 +97,7 @@ Linked targets:
   - Uses color + normal + depth guides.
 
 - `shaders/quad.frag`
-  - Display pass with ACES filmic tonemapping and gamma correction.
+  - Display pass with elevation-driven exposure, ACES filmic tonemapping, and gamma correction.
 
 - `shaders/quad.vert`
   - Fullscreen triangle vertex shader.
@@ -109,12 +110,13 @@ Per-frame pipeline:
 2. Path trace pass (`pathtrace.frag`) -> `colorTex_`, `normalTex_`, `depthTex_`.
 3. Temporal accumulation (`accumulate.frag`) -> ping/pong `accum` texture.
 4. A-Trous denoise (`atrous.frag`) -> ping/pong denoise textures.
-5. Final present (`quad.frag`) -> swapchain framebuffer.
+5. Final present (`quad.frag`) with smoothed auto exposure -> swapchain framebuffer.
 
 Notes:
 
 - Rendering is progressive: each frame adds one noisy sample per pixel and converges over time.
 - `frameIndex` is reset when scene, camera, or lighting changes to avoid ghosted accumulation.
+- Display exposure is derived from `sunElevation` on the CPU and adapts smoothly without adding a new reduction pass.
 
 ## 7) Data Contracts
 
@@ -162,6 +164,8 @@ Lighting:
 - Sun Azimuth
 - Sun Elevation
 
+Note: changing `Sun Elevation` also updates the automatic display exposure target.
+
 Denoiser:
 
 - Sigma Color
@@ -201,7 +205,7 @@ Run:
 
 - BVH traversal uses a fixed-size local stack in shader code.
 - Scene primitives are axis-aligned cubes only.
-- Lighting model is simple but configurable (sun direction/elevation, elevation-driven sky and ambient, diffuse bounce).
+- Lighting model is simple but configurable (sun direction/elevation, elevation-driven sky and ambient, elevation-driven auto exposure, diffuse bounce).
 - No persistence/export of generated scenes.
 
 ## 12) Non-Functional Expectations

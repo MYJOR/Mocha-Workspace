@@ -49,16 +49,16 @@ void ProceduralGen::generate(int gridSize, float noiseScale, float heightScale, 
                 cube.bmax = glm::vec4(wx + 1.0f, wy + 1.0f, wz + 1.0f, 0.0f);
 
                 float t = float(y) / std::max(1.0f, heightScale);
-                float grassR = 0.25f + 0.15f * t;
-                float grassG = 0.55f + 0.2f * t;
-                float grassB = 0.18f + 0.1f * t;
+                float grassR = 0.18f + 0.12f * t;
+                float grassG = 0.58f + 0.22f * t;
+                float grassB = 0.12f + 0.08f * t;
 
                 if (y == 0) {
-                    cube.albedo = glm::vec4(0.45f, 0.35f, 0.25f, 1.0f);
+                    cube.albedo = glm::vec4(0.50f, 0.32f, 0.18f, 1.0f);
                 } else if (y == height - 1) {
                     cube.albedo = glm::vec4(grassR, grassG, grassB, 1.0f);
                 } else {
-                    cube.albedo = glm::vec4(0.5f, 0.4f, 0.3f, 1.0f);
+                    cube.albedo = glm::vec4(0.55f, 0.38f, 0.22f, 1.0f);
                 }
 
                 cubes_.push_back(cube);
