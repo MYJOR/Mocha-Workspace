@@ -101,6 +101,7 @@ struct AppState {
     LightingParams lighting;
     AOParams aoParams;
     EmissiveParams emissiveParams;
+    BridgeParams bridgeParams;
 
     int   gridSize    = 4;
     float noiseScale  = 0.12f;
@@ -185,7 +186,7 @@ int main() {
 
         if (app.needRegen) {
             app.procGen.generate(app.gridSize, app.noiseScale, app.heightScale, app.seed,
-                                app.emissiveParams.density);
+                                app.emissiveParams.density, app.bridgeParams);
             app.procGen.uploadTBO();
             app.needRegen = false;
             app.frameIndex = 0;
@@ -265,6 +266,24 @@ int main() {
             }
         }
         ImGui::Text("Cubes: %d", app.procGen.getCubeCount());
+
+        ImGui::SeparatorText("Bridges");
+        {
+            bool bridgeDirty = false;
+            bridgeDirty |= ImGui::Checkbox("Bridges Enabled", &app.bridgeParams.enabled);
+            if (app.bridgeParams.enabled) {
+                bridgeDirty |= ImGui::SliderInt("Max Bridges", &app.bridgeParams.maxBridges, 1, 12);
+                bridgeDirty |= ImGui::SliderInt("Min Span", &app.bridgeParams.minSpan, 2, 6);
+                bridgeDirty |= ImGui::SliderInt("Max Span", &app.bridgeParams.maxSpan, 4, 16);
+                bridgeDirty |= ImGui::SliderInt("Bridge Width", &app.bridgeParams.width, 1, 3);
+                bridgeDirty |= ImGui::Checkbox("Supports", &app.bridgeParams.supports);
+            }
+            if (bridgeDirty) {
+                app.needRegen = true;
+                app.lastTerrainEditTime = currentTime;
+                app.emissiveBlend = 0.0f;
+            }
+        }
 
         ImGui::SeparatorText("Camera");
         bool camDirty = false;

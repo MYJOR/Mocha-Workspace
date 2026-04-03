@@ -3,7 +3,7 @@
 ## 1) Project Summary
 
 IsometricPathTracer is a real-time, GPU-driven isometric path tracing demo written in C++17 and OpenGL 4.1.  
-The application renders a procedural voxel-like terrain composed of axis-aligned cubes, supports sparse procedurally generated emissive terrain cubes with elevation-driven intensity, applies temporal accumulation and A-Trous denoising, then displays the result with elevation-driven auto exposure, ACES tonemapping, and gamma correction.
+The application renders a procedural voxel-like terrain composed of axis-aligned cubes, supports sparse procedurally generated emissive terrain cubes with elevation-driven intensity, procedural bridges synthesized from terrain analysis, applies temporal accumulation and A-Trous denoising, then displays the result with elevation-driven auto exposure, ACES tonemapping, and gamma correction.
 
 Primary goals:
 
@@ -69,10 +69,14 @@ Linked targets:
   - Uploads camera data through UBO (`CameraUBO`) to shaders.
 
 - `src/ProceduralGen.h/.cpp`
-  - Generates cube terrain using Perlin-based height values.
-  - Marks a sparse deterministic subset of top-surface cubes as emissive.
-  - Builds a SAH-binned BVH on CPU.
+  - Runs a staged terrain generation pipeline:
+    1. `sampleHeightField` — samples 2D Perlin noise into a `TerrainCell` grid (`active`, `height`).
+    2. `emitTerrainColumns` — reads the grid and emits unit cubes with layer-based albedo and sparse emissive markers.
+    3. `findBridgeSpans` (optional) — terrain analysis pass that scans cliff edges in cardinal directions, validates gap clearance, and selects up to `maxBridges` spans deterministically using seed-based hash ranking with overlap rejection.
+    4. `emitBridgeCubes` (optional) — appends deck cubes and optional vertical support cubes for each selected span.
+  - Builds a SAH-binned BVH over all cubes (terrain + bridges) on CPU.
   - Uploads cube data and BVH nodes to texture buffers for GPU traversal.
+  - Bridge parameters are controlled by `BridgeParams` (`enabled`, `maxBridges`, `minSpan`, `maxSpan`, `width`, `supports`).
 
 - `src/Renderer.h/.cpp`
   - Creates/owns GL programs, textures, and FBOs.
@@ -119,6 +123,7 @@ Notes:
 - `frameIndex` is reset when scene, camera, lighting, or effective emissive intensity changes to avoid ghosted accumulation.
 - Display exposure is derived from `sunElevation` on the CPU and adapts smoothly without adding a new reduction pass.
 - Emissive terrain lighting is suppressed during active terrain edits, then fades in after a short debounce delay.
+- Bridge cubes are standard `CubeData` axis-aligned boxes; no renderer or shader changes are required to support them.
 
 ## 7) Data Contracts
 
@@ -177,6 +182,15 @@ Emissive:
 - Debounce (s)
 - Fade In (s)
 
+Bridges:
+
+- Bridges Enabled
+- Max Bridges
+- Min Span
+- Max Span
+- Bridge Width
+- Supports
+
 Denoiser:
 
 - Sigma Color
@@ -212,12 +226,15 @@ Run:
 - API overhead reduction: uniform locations are cached during renderer initialization.
 - Temporal accumulation improves image quality stability at low per-frame sample counts.
 - Sparse deterministic emissive placement keeps geometry overhead low while debounce/fade logic avoids unnecessary visual churn during terrain edits.
+- Bridge generation is gated behind `BridgeParams::enabled`; when disabled the pipeline produces identical output to before with no extra cost.
+- Bridge candidate analysis is O(gridSize²) with a constant-depth span scan, keeping CPU generation time proportional to scene size.
 
 ## 11) Known Constraints
 
 - BVH traversal uses a fixed-size local stack in shader code.
-- Scene primitives are axis-aligned cubes only.
+- Scene primitives are axis-aligned cubes only (terrain columns, emissive markers, and bridge decks/supports all share the same `CubeData` layout).
 - Lighting model is simple but configurable (sun direction/elevation, elevation-driven sky and ambient, elevation-driven auto exposure, sparse emissive terrain cubes, diffuse bounce).
+- Bridge detection scans only in the +x and +z cardinal directions; diagonal or curved spans are not supported.
 - Emissive cubes currently add radiance only when hit by traced rays; there is no dedicated direct-light sampling or MIS for emissive geometry.
 - No persistence/export of generated scenes.
 
@@ -234,3 +251,5 @@ Run:
 - Better temporal stability and history clamping.
 - Alternative denoisers and quality presets.
 - Mesh support and scene serialization.
+- Bridge improvements: diagonal spans, arch profiles, emissive lanterns, rail geometry.
+- General feature-pass architecture: roads, ruins, water, or other procedural overlays using the same terrain-analysis-first pipeline introduced for bridges.
