@@ -1,4 +1,5 @@
 #include "Renderer.h"
+#include <algorithm>
 #include <fstream>
 #include <sstream>
 #include <iostream>
@@ -130,8 +131,11 @@ void Renderer::init(int width, int height) {
     glGenVertexArrays(1, &quadVAO_);
 
     ptLoc_.cubeData    = glGetUniformLocation(ptProgram_, "uCubeData");
-    ptLoc_.bvhData     = glGetUniformLocation(ptProgram_, "uBVHData");
+    ptLoc_.cubeBVH     = glGetUniformLocation(ptProgram_, "uCubeBVH");
     ptLoc_.cubeCount   = glGetUniformLocation(ptProgram_, "uCubeCount");
+    ptLoc_.triData     = glGetUniformLocation(ptProgram_, "uTriData");
+    ptLoc_.triBVH      = glGetUniformLocation(ptProgram_, "uTriBVH");
+    ptLoc_.triCount    = glGetUniformLocation(ptProgram_, "uTriCount");
     ptLoc_.frameIndex  = glGetUniformLocation(ptProgram_, "uFrameIndex");
     ptLoc_.seed        = glGetUniformLocation(ptProgram_, "uSeed");
     ptLoc_.resolution  = glGetUniformLocation(ptProgram_, "uResolution");
@@ -172,8 +176,10 @@ void Renderer::resize(int width, int height) {
     createFBOs();
 }
 
-void Renderer::dispatchPathTrace(GLuint cameraUBO, GLuint cubeTBOTex, GLuint bvhTBOTex,
-                                  int cubeCount, int frameIndex, unsigned int seed,
+void Renderer::dispatchPathTrace(GLuint cameraUBO,
+                                  GLuint cubeTBOTex, GLuint cubeBVHTBOTex, int cubeCount,
+                                  GLuint triTBOTex,  GLuint triBVHTBOTex,  int triCount,
+                                  int frameIndex, unsigned int seed,
                                   const LightingParams& lighting, const AOParams& ao,
                                   float emissiveIntensity) {
     glBindFramebuffer(GL_FRAMEBUFFER, ptFBO_);
@@ -188,10 +194,21 @@ void Renderer::dispatchPathTrace(GLuint cameraUBO, GLuint cubeTBOTex, GLuint bvh
     glUniform1i(ptLoc_.cubeData, 0);
 
     glActiveTexture(GL_TEXTURE1);
-    glBindTexture(GL_TEXTURE_BUFFER, bvhTBOTex);
-    glUniform1i(ptLoc_.bvhData, 1);
+    glBindTexture(GL_TEXTURE_BUFFER, cubeBVHTBOTex);
+    glUniform1i(ptLoc_.cubeBVH, 1);
 
     glUniform1i(ptLoc_.cubeCount, cubeCount);
+
+    glActiveTexture(GL_TEXTURE2);
+    glBindTexture(GL_TEXTURE_BUFFER, triTBOTex);
+    glUniform1i(ptLoc_.triData, 2);
+
+    glActiveTexture(GL_TEXTURE3);
+    glBindTexture(GL_TEXTURE_BUFFER, triBVHTBOTex);
+    glUniform1i(ptLoc_.triBVH, 3);
+
+    glUniform1i(ptLoc_.triCount, triCount);
+
     glUniform1i(ptLoc_.frameIndex, frameIndex);
     glUniform1ui(ptLoc_.seed, seed);
     glUniform2f(ptLoc_.resolution, float(width_), float(height_));
@@ -244,7 +261,18 @@ GLuint Renderer::getAccumOutput() const {
     return accumWriteToPing_ ? accumPong_ : accumPing_;
 }
 
-void Renderer::dispatchDenoise(const DenoiseParams& params) {
+void Renderer::dispatchDenoise(const DenoiseParams& params, int frameIndex) {
+    int effectivePasses = params.atrousPasses;
+    if (params.enabled && frameIndex > 16)
+        effectivePasses = std::max(1, effectivePasses - (frameIndex - 16) / 16);
+    if (!params.enabled) effectivePasses = 0;
+
+    if (effectivePasses <= 0) {
+        denoiseSkipped_ = true;
+        return;
+    }
+    denoiseSkipped_ = false;
+
     glUseProgram(denoiseProgram_);
 
     glActiveTexture(GL_TEXTURE1);
@@ -267,7 +295,7 @@ void Renderer::dispatchDenoise(const DenoiseParams& params) {
     glViewport(0, 0, width_, height_);
     glBindVertexArray(quadVAO_);
 
-    for (int pass = 0; pass < params.atrousPasses; ++pass) {
+    for (int pass = 0; pass < effectivePasses; ++pass) {
         int stepWidth = 1 << pass;
         glUniform1i(denoiseLoc_.stepWidth, stepWidth);
 
@@ -293,6 +321,7 @@ void Renderer::dispatchDenoise(const DenoiseParams& params) {
 }
 
 GLuint Renderer::getOutputTexture() const {
+    if (denoiseSkipped_) return getAccumOutput();
     return lastOutputIsPing_ ? denoisePing_ : denoisePong_;
 }
 

@@ -7,6 +7,7 @@ struct DenoiseParams {
     float sigmaNormal = 128.0f;
     float sigmaDepth  = 0.8f;
     int   atrousPasses = 5;
+    bool  enabled      = true;
 };
 
 struct LightingParams {
@@ -20,20 +21,22 @@ struct LightingParams {
 struct AOParams {
     bool  enabled  = true;
     float strength = 0.5f;
-    float radius   = 0.5f;
-    int   samples  = 4;
+    float radius   = 0.3f;
+    int   samples  = 2;
 };
 
 class Renderer {
 public:
     void init(int width, int height);
     void resize(int width, int height);
-    void dispatchPathTrace(GLuint cameraUBO, GLuint cubeTBOTex, GLuint bvhTBOTex,
-                           int cubeCount, int frameIndex, unsigned int seed,
+    void dispatchPathTrace(GLuint cameraUBO,
+                           GLuint cubeTBOTex, GLuint cubeBVHTBOTex, int cubeCount,
+                           GLuint triTBOTex,  GLuint triBVHTBOTex,  int triCount,
+                           int frameIndex, unsigned int seed,
                            const LightingParams& lighting, const AOParams& ao,
                            float emissiveIntensity);
     void dispatchAccumulate(int frameIndex);
-    void dispatchDenoise(const DenoiseParams& params);
+    void dispatchDenoise(const DenoiseParams& params, int frameIndex);
     void drawFullscreenQuad(float exposure, float saturation);
     void destroy();
 
@@ -71,9 +74,12 @@ private:
 
     GLuint quadVAO_ = 0;
     bool lastOutputIsPing_ = true;
+    bool denoiseSkipped_   = false;
 
     struct {
-        GLint cubeData, bvhData, cubeCount, frameIndex, seed, resolution;
+        GLint cubeData, cubeBVH, cubeCount;
+        GLint triData, triBVH, triCount;
+        GLint frameIndex, seed, resolution;
         GLint sunDir, sunColor, skyZenith, skyHorizon, ambient;
         GLint emissiveIntensity;
         GLint aoEnabled, aoStrength, aoRadius, aoSamples;

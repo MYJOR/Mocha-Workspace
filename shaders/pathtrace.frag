@@ -16,8 +16,13 @@ layout(std140) uniform CameraUBO {
 };
 
 uniform samplerBuffer uCubeData;
-uniform samplerBuffer uBVHData;
+uniform samplerBuffer uCubeBVH;
 uniform int   uCubeCount;
+
+uniform samplerBuffer uTriData;
+uniform samplerBuffer uTriBVH;
+uniform int   uTriCount;
+
 uniform int   uFrameIndex;
 uniform uint  uSeed;
 uniform vec2  uResolution;
@@ -75,6 +80,8 @@ vec3 cosineWeightedHemisphere(vec3 normal) {
     return normalize(tangent * r * cos(theta) + bitangent * r * sin(theta) + normal * sqrt(1.0 - u1));
 }
 
+// ---- primitive fetch helpers ------------------------------------------------
+
 void fetchCube(int idx, out vec3 bmin, out vec3 bmax, out vec3 albedo, out vec3 emission) {
     int base = idx * 4;
     vec4 d0 = texelFetch(uCubeData, base + 0);
@@ -86,6 +93,23 @@ void fetchCube(int idx, out vec3 bmin, out vec3 bmax, out vec3 albedo, out vec3 
     albedo   = d2.xyz;
     emission = d3.xyz;
 }
+
+void fetchTriangle(int idx, out vec3 v0, out vec3 v1, out vec3 v2,
+                   out vec3 albedo, out vec3 emission) {
+    int base = idx * 5;
+    vec4 d0 = texelFetch(uTriData, base + 0);
+    vec4 d1 = texelFetch(uTriData, base + 1);
+    vec4 d2 = texelFetch(uTriData, base + 2);
+    vec4 d3 = texelFetch(uTriData, base + 3);
+    vec4 d4 = texelFetch(uTriData, base + 4);
+    v0       = d0.xyz;
+    v1       = d1.xyz;
+    v2       = d2.xyz;
+    albedo   = d3.xyz;
+    emission = d4.xyz;
+}
+
+// ---- intersection routines --------------------------------------------------
 
 bool intersectAABB(vec3 ro, vec3 rd, vec3 bmin, vec3 bmax, out float tNear, out vec3 normal) {
     vec3 invRd = 1.0 / rd;
@@ -111,14 +135,6 @@ bool intersectAABB(vec3 ro, vec3 rd, vec3 bmin, vec3 bmax, out float tNear, out 
     return true;
 }
 
-struct HitInfo {
-    bool  hit;
-    float t;
-    vec3  normal;
-    vec3  albedo;
-    vec3  emission;
-};
-
 bool intersectAABBFast(vec3 ro, vec3 invRd, vec3 bmin, vec3 bmax, float tMax) {
     vec3 t1 = (bmin - ro) * invRd;
     vec3 t2 = (bmax - ro) * invRd;
@@ -129,7 +145,40 @@ bool intersectAABBFast(vec3 ro, vec3 invRd, vec3 bmin, vec3 bmax, float tMax) {
     return tNear <= tFar && tFar >= 0.0 && tNear < tMax;
 }
 
-HitInfo traceScene(vec3 ro, vec3 rd) {
+bool intersectTriangle(vec3 ro, vec3 rd, vec3 v0, vec3 v1, vec3 v2,
+                       out float t, out vec3 normal) {
+    vec3 e1 = v1 - v0;
+    vec3 e2 = v2 - v0;
+    vec3 h  = cross(rd, e2);
+    float a = dot(e1, h);
+    if (abs(a) < 1e-7) return false;
+    float f = 1.0 / a;
+    vec3 s  = ro - v0;
+    float u = f * dot(s, h);
+    if (u < 0.0 || u > 1.0) return false;
+    vec3 q  = cross(s, e1);
+    float v = f * dot(rd, q);
+    if (v < 0.0 || u + v > 1.0) return false;
+    t = f * dot(e2, q);
+    if (t < 0.001) return false;
+    normal = normalize(cross(e1, e2));
+    if (dot(normal, rd) > 0.0) normal = -normal;
+    return true;
+}
+
+// ---- hit info struct --------------------------------------------------------
+
+struct HitInfo {
+    bool  hit;
+    float t;
+    vec3  normal;
+    vec3  albedo;
+    vec3  emission;
+};
+
+// ---- BVH traversal: cubes (bridges) ----------------------------------------
+
+HitInfo traceCubes(vec3 ro, vec3 rd) {
     HitInfo best;
     best.hit = false;
     best.t   = 1e30;
@@ -144,8 +193,8 @@ HitInfo traceScene(vec3 ro, vec3 rd) {
     while (stackTop > 0) {
         int nodeIdx = stack[--stackTop];
         int base = nodeIdx * 2;
-        vec4 d0 = texelFetch(uBVHData, base);
-        vec4 d1 = texelFetch(uBVHData, base + 1);
+        vec4 d0 = texelFetch(uCubeBVH, base);
+        vec4 d1 = texelFetch(uCubeBVH, base + 1);
 
         vec3 bmin = d0.xyz;
         vec3 bmax = d1.xyz;
@@ -182,8 +231,14 @@ HitInfo traceScene(vec3 ro, vec3 rd) {
     return best;
 }
 
-bool occluded(vec3 ro, vec3 rd) {
-    if (uCubeCount == 0) return false;
+// ---- BVH traversal: triangles (terrain) ------------------------------------
+
+HitInfo traceTriangles(vec3 ro, vec3 rd) {
+    HitInfo best;
+    best.hit = false;
+    best.t   = 1e30;
+
+    if (uTriCount == 0) return best;
 
     vec3 invRd = 1.0 / rd;
     int stack[32];
@@ -193,13 +248,13 @@ bool occluded(vec3 ro, vec3 rd) {
     while (stackTop > 0) {
         int nodeIdx = stack[--stackTop];
         int base = nodeIdx * 2;
-        vec4 d0 = texelFetch(uBVHData, base);
-        vec4 d1 = texelFetch(uBVHData, base + 1);
+        vec4 d0 = texelFetch(uTriBVH, base);
+        vec4 d1 = texelFetch(uTriBVH, base + 1);
 
         vec3 bmin = d0.xyz;
         vec3 bmax = d1.xyz;
 
-        if (!intersectAABBFast(ro, invRd, bmin, bmax, 1e30))
+        if (!intersectAABBFast(ro, invRd, bmin, bmax, best.t))
             continue;
 
         int primCount = floatBitsToInt(d1.w);
@@ -207,12 +262,17 @@ bool occluded(vec3 ro, vec3 rd) {
         if (primCount > 0) {
             int primStart = floatBitsToInt(d0.w);
             for (int i = 0; i < primCount; ++i) {
-                vec3 cbmin, cbmax, alb, emi;
-                fetchCube(primStart + i, cbmin, cbmax, alb, emi);
+                vec3 tv0, tv1, tv2, alb, emi;
+                fetchTriangle(primStart + i, tv0, tv1, tv2, alb, emi);
                 float t;
                 vec3 n;
-                if (intersectAABB(ro, rd, cbmin, cbmax, t, n) && t > 0.001)
-                    return true;
+                if (intersectTriangle(ro, rd, tv0, tv1, tv2, t, n) && t < best.t) {
+                    best.hit      = true;
+                    best.t        = t;
+                    best.normal   = n;
+                    best.albedo   = alb;
+                    best.emission = emi;
+                }
             }
         } else {
             int rightChild = floatBitsToInt(d0.w);
@@ -221,10 +281,27 @@ bool occluded(vec3 ro, vec3 rd) {
             stack[stackTop++] = leftChild;
         }
     }
-    return false;
+    return best;
 }
 
-bool occludedWithinRadius(vec3 ro, vec3 rd, float maxDist) {
+// ---- combined scene trace ---------------------------------------------------
+
+HitInfo traceScene(vec3 ro, vec3 rd) {
+    HitInfo cubeHit = traceCubes(ro, rd);
+    HitInfo triHit  = traceTriangles(ro, rd);
+
+    if (cubeHit.hit && (!triHit.hit || cubeHit.t < triHit.t)) return cubeHit;
+    if (triHit.hit) return triHit;
+
+    HitInfo miss;
+    miss.hit = false;
+    miss.t   = 1e30;
+    return miss;
+}
+
+// ---- occlusion helpers ------------------------------------------------------
+
+bool occludedCubes(vec3 ro, vec3 rd, float maxDist) {
     if (uCubeCount == 0) return false;
 
     vec3 invRd = 1.0 / rd;
@@ -235,8 +312,8 @@ bool occludedWithinRadius(vec3 ro, vec3 rd, float maxDist) {
     while (stackTop > 0) {
         int nodeIdx = stack[--stackTop];
         int base = nodeIdx * 2;
-        vec4 d0 = texelFetch(uBVHData, base);
-        vec4 d1 = texelFetch(uBVHData, base + 1);
+        vec4 d0 = texelFetch(uCubeBVH, base);
+        vec4 d1 = texelFetch(uCubeBVH, base + 1);
 
         vec3 bmin = d0.xyz;
         vec3 bmax = d1.xyz;
@@ -266,7 +343,60 @@ bool occludedWithinRadius(vec3 ro, vec3 rd, float maxDist) {
     return false;
 }
 
+bool occludedTriangles(vec3 ro, vec3 rd, float maxDist) {
+    if (uTriCount == 0) return false;
+
+    vec3 invRd = 1.0 / rd;
+    int stack[32];
+    int stackTop = 0;
+    stack[stackTop++] = 0;
+
+    while (stackTop > 0) {
+        int nodeIdx = stack[--stackTop];
+        int base = nodeIdx * 2;
+        vec4 d0 = texelFetch(uTriBVH, base);
+        vec4 d1 = texelFetch(uTriBVH, base + 1);
+
+        vec3 bmin = d0.xyz;
+        vec3 bmax = d1.xyz;
+
+        if (!intersectAABBFast(ro, invRd, bmin, bmax, maxDist))
+            continue;
+
+        int primCount = floatBitsToInt(d1.w);
+
+        if (primCount > 0) {
+            int primStart = floatBitsToInt(d0.w);
+            for (int i = 0; i < primCount; ++i) {
+                vec3 tv0, tv1, tv2, alb, emi;
+                fetchTriangle(primStart + i, tv0, tv1, tv2, alb, emi);
+                float t;
+                vec3 n;
+                if (intersectTriangle(ro, rd, tv0, tv1, tv2, t, n) && t < maxDist)
+                    return true;
+            }
+        } else {
+            int rightChild = floatBitsToInt(d0.w);
+            int leftChild  = nodeIdx + 1;
+            stack[stackTop++] = rightChild;
+            stack[stackTop++] = leftChild;
+        }
+    }
+    return false;
+}
+
+bool occluded(vec3 ro, vec3 rd) {
+    return occludedCubes(ro, rd, 1e30) || occludedTriangles(ro, rd, 1e30);
+}
+
+bool occludedWithinRadius(vec3 ro, vec3 rd, float maxDist) {
+    return occludedCubes(ro, rd, maxDist) || occludedTriangles(ro, rd, maxDist);
+}
+
+// ---- AO & sky ---------------------------------------------------------------
+
 float computeAO(vec3 hitPos, vec3 normal) {
+    if (uAOSamples <= 0) return 1.0;
     vec3 origin = hitPos + normal * 0.002;
     int blocked = 0;
     for (int i = 0; i < uAOSamples; ++i) {
@@ -281,6 +411,8 @@ vec3 skyGradient(vec3 rd) {
     float t = 0.5 * (rd.y + 1.0);
     return mix(uSkyHorizon, uSkyZenith, t);
 }
+
+// ---- main -------------------------------------------------------------------
 
 void main() {
     ivec2 pixel = ivec2(gl_FragCoord.xy);

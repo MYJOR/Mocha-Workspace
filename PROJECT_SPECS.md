@@ -3,7 +3,7 @@
 ## 1) Project Summary
 
 IsometricPathTracer is a real-time, GPU-driven isometric path tracing demo written in C++17 and OpenGL 4.1.  
-The application renders a procedural voxel-like terrain composed of axis-aligned cubes, supports sparse procedurally generated emissive terrain cubes with elevation-driven intensity, procedural bridges synthesized from terrain analysis, applies temporal accumulation and A-Trous denoising, then displays the result with elevation-driven auto exposure, ACES tonemapping, and gamma correction.
+The application renders a procedural voxel-like terrain composed of axis-aligned cubes, supports sparse procedurally generated emissive terrain cubes with elevation-driven intensity, fixed-spec procedural bridges with cleared approach zones, applies temporal accumulation and A-Trous denoising, then displays the result with elevation-driven auto exposure, ACES tonemapping, and gamma correction.
 
 Primary goals:
 
@@ -71,12 +71,12 @@ Linked targets:
 - `src/ProceduralGen.h/.cpp`
   - Runs a staged terrain generation pipeline:
     1. `sampleHeightField` — samples 2D Perlin noise into a `TerrainCell` grid (`active`, `height`).
-    2. `emitTerrainColumns` — reads the grid and emits unit cubes with layer-based albedo and sparse emissive markers.
-    3. `findBridgeSpans` (optional) — terrain analysis pass that scans cliff edges in cardinal directions, validates gap clearance, and selects up to `maxBridges` spans deterministically using seed-based hash ranking with overlap rejection.
-    4. `emitBridgeCubes` (optional) — appends deck cubes and optional vertical support cubes for each selected span.
+    2. `placeBridgeSpans` (optional) — finds fixed-length bridge anchor pairs in the `+x` and `+z` directions, selects up to `maxBridges` spans deterministically using seed-based hash ranking with overlap rejection, and computes approach clearance zones.
+    3. `emitTerrainColumns` — reads the grid and emits unit cubes with layer-based albedo and sparse emissive markers, skipping bridge clearance zones when bridges are enabled.
+    4. `emitBridgeCubes` (optional) — appends fixed-size bridge deck cubes and optional vertical support cubes for each selected span.
   - Builds a SAH-binned BVH over all cubes (terrain + bridges) on CPU.
   - Uploads cube data and BVH nodes to texture buffers for GPU traversal.
-  - Bridge parameters are controlled by `BridgeParams` (`enabled`, `maxBridges`, `minSpan`, `maxSpan`, `width`, `supports`).
+  - Bridge parameters are controlled by `BridgeParams` (`enabled`, `maxBridges`, `supports`), while bridge dimensions are fixed by constants: 3 blocks wide, 12 blocks long, with 4-block-wide by 8-block-long empty approach zones on both ends.
 
 - `src/Renderer.h/.cpp`
   - Creates/owns GL programs, textures, and FBOs.
@@ -124,6 +124,7 @@ Notes:
 - Display exposure is derived from `sunElevation` on the CPU and adapts smoothly without adding a new reduction pass.
 - Emissive terrain lighting is suppressed during active terrain edits, then fades in after a short debounce delay.
 - Bridge cubes are standard `CubeData` axis-aligned boxes; no renderer or shader changes are required to support them.
+- Bridge generation now uses a placement-first pipeline so terrain clearances can be reserved before terrain cubes are emitted.
 
 ## 7) Data Contracts
 
@@ -186,10 +187,9 @@ Bridges:
 
 - Bridges Enabled
 - Max Bridges
-- Min Span
-- Max Span
-- Bridge Width
 - Supports
+- Fixed deck size display: `3 x 12`
+- Fixed approach clearance display: `4 x 8`
 
 Denoiser:
 
@@ -227,14 +227,16 @@ Run:
 - Temporal accumulation improves image quality stability at low per-frame sample counts.
 - Sparse deterministic emissive placement keeps geometry overhead low while debounce/fade logic avoids unnecessary visual churn during terrain edits.
 - Bridge generation is gated behind `BridgeParams::enabled`; when disabled the pipeline produces identical output to before with no extra cost.
-- Bridge candidate analysis is O(gridSize²) with a constant-depth span scan, keeping CPU generation time proportional to scene size.
+- Bridge placement analysis is O(gridSize²) with constant-time per-direction checks plus deterministic selection, keeping CPU generation time proportional to scene size.
 
 ## 11) Known Constraints
 
 - BVH traversal uses a fixed-size local stack in shader code.
 - Scene primitives are axis-aligned cubes only (terrain columns, emissive markers, and bridge decks/supports all share the same `CubeData` layout).
 - Lighting model is simple but configurable (sun direction/elevation, elevation-driven sky and ambient, elevation-driven auto exposure, sparse emissive terrain cubes, diffuse bounce).
-- Bridge detection scans only in the +x and +z cardinal directions; diagonal or curved spans are not supported.
+- Bridge placement scans only in the +x and +z cardinal directions; diagonal or curved spans are not supported.
+- Bridge dimensions are fixed: 3 blocks wide, 12 blocks long, with empty 4-by-8 approach zones on both ends.
+- Bridge emissive markers are limited to the left and right edge cubes on both ends of the deck; the center end cubes are non-emissive.
 - Emissive cubes currently add radiance only when hit by traced rays; there is no dedicated direct-light sampling or MIS for emissive geometry.
 - No persistence/export of generated scenes.
 

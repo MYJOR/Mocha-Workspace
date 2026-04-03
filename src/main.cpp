@@ -119,6 +119,8 @@ struct AppState {
     float emissiveBlend       = 0.0f;
     float prevEmissiveIntensity = 0.0f;
 
+    float renderScale = 0.75f;
+
     int  frameIndex   = 0;
     bool needRegen    = true;
 };
@@ -127,8 +129,10 @@ static void framebufferSizeCallback(GLFWwindow* window, int w, int h) {
     if (w == 0 || h == 0) return;
     auto* app = static_cast<AppState*>(glfwGetWindowUserPointer(window));
     glViewport(0, 0, w, h);
-    app->renderer.resize(w, h);
-    app->camera.update(w, h);
+    int rw = std::max(1, int(w * app->renderScale));
+    int rh = std::max(1, int(h * app->renderScale));
+    app->renderer.resize(rw, rh);
+    app->camera.update(rw, rh);
     app->camera.uploadUBO();
     app->frameIndex = 0;
 }
@@ -168,9 +172,11 @@ int main() {
     glfwSetWindowUserPointer(window, &app);
     glfwSetFramebufferSizeCallback(window, framebufferSizeCallback);
 
-    app.camera.init(INIT_WIDTH, INIT_HEIGHT);
+    int initRW = std::max(1, int(INIT_WIDTH * app.renderScale));
+    int initRH = std::max(1, int(INIT_HEIGHT * app.renderScale));
+    app.camera.init(initRW, initRH);
     app.camera.uploadUBO();
-    app.renderer.init(INIT_WIDTH, INIT_HEIGHT);
+    app.renderer.init(initRW, initRH);
     computeLighting(app.sunAzimuth, app.sunElevation, app.lighting);
     app.targetExposure = computeTargetExposure(app.sunElevation);
     app.exposure       = app.targetExposure;
@@ -227,13 +233,17 @@ int main() {
         unsigned int frameSeed = static_cast<unsigned int>(app.frameIndex * 719393 + 1);
 
         app.renderer.dispatchPathTrace(
-            app.camera.getUBO(), app.procGen.getTBOTex(), app.procGen.getBVHTBOTex(),
-            app.procGen.getCubeCount(), app.frameIndex, frameSeed,
+            app.camera.getUBO(),
+            app.procGen.getCubeTBOTex(), app.procGen.getCubeBVHTBOTex(),
+            app.procGen.getCubeCount(),
+            app.procGen.getTriTBOTex(), app.procGen.getTriBVHTBOTex(),
+            app.procGen.getTriCount(),
+            app.frameIndex, frameSeed,
             app.lighting, app.aoParams, emissiveIntensity
         );
 
         app.renderer.dispatchAccumulate(app.frameIndex);
-        app.renderer.dispatchDenoise(app.denoiseParams);
+        app.renderer.dispatchDenoise(app.denoiseParams, app.frameIndex);
 
         constexpr float exposureSpeed = 5.0f;
         app.exposure = lerpf(app.exposure, app.targetExposure,
@@ -265,7 +275,8 @@ int main() {
                 app.emissiveBlend = 0.0f;
             }
         }
-        ImGui::Text("Cubes: %d", app.procGen.getCubeCount());
+        ImGui::Text("Triangles: %d  Cubes: %d",
+                    app.procGen.getTriCount(), app.procGen.getCubeCount());
 
         ImGui::SeparatorText("Bridges");
         {
@@ -273,10 +284,10 @@ int main() {
             bridgeDirty |= ImGui::Checkbox("Bridges Enabled", &app.bridgeParams.enabled);
             if (app.bridgeParams.enabled) {
                 bridgeDirty |= ImGui::SliderInt("Max Bridges", &app.bridgeParams.maxBridges, 1, 12);
-                bridgeDirty |= ImGui::SliderInt("Min Span", &app.bridgeParams.minSpan, 2, 6);
-                bridgeDirty |= ImGui::SliderInt("Max Span", &app.bridgeParams.maxSpan, 4, 16);
-                bridgeDirty |= ImGui::SliderInt("Bridge Width", &app.bridgeParams.width, 1, 3);
                 bridgeDirty |= ImGui::Checkbox("Supports", &app.bridgeParams.supports);
+                ImGui::Text("Deck: %d wide x %d long", BRIDGE_WIDTH, BRIDGE_LENGTH);
+                ImGui::Text("Approach clearance: %d wide x %d long",
+                            BRIDGE_CLEARANCE_WID, BRIDGE_CLEARANCE_LEN);
             }
             if (bridgeDirty) {
                 app.needRegen = true;
@@ -292,7 +303,9 @@ int main() {
         camDirty |= ImGui::SliderFloat("Ortho Scale", &app.camera.orthoScale, 2.0f, 40.0f);
         camDirty |= ImGui::SliderFloat("Distance", &app.camera.distance, 5.0f, 80.0f);
         if (camDirty) {
-            app.camera.update(fbW, fbH);
+            int rw = std::max(1, int(fbW * app.renderScale));
+            int rh = std::max(1, int(fbH * app.renderScale));
+            app.camera.update(rw, rh);
             app.camera.uploadUBO();
             app.frameIndex = 0;
         }
@@ -327,13 +340,26 @@ int main() {
         aoDirty |= ImGui::Checkbox("AO Enabled", &app.aoParams.enabled);
         aoDirty |= ImGui::SliderFloat("AO Strength", &app.aoParams.strength, 0.0f, 1.0f);
         aoDirty |= ImGui::SliderFloat("AO Radius", &app.aoParams.radius, 0.05f, 2.0f);
-        aoDirty |= ImGui::SliderInt("AO Samples", &app.aoParams.samples, 1, 16);
+        aoDirty |= ImGui::SliderInt("AO Samples", &app.aoParams.samples, 0, 16);
         if (aoDirty) app.frameIndex = 0;
 
         ImGui::SeparatorText("Display");
+        {
+            float prevScale = app.renderScale;
+            ImGui::SliderFloat("Render Scale", &app.renderScale, 0.25f, 1.0f);
+            if (app.renderScale != prevScale) {
+                int rw = std::max(1, int(fbW * app.renderScale));
+                int rh = std::max(1, int(fbH * app.renderScale));
+                app.renderer.resize(rw, rh);
+                app.camera.update(rw, rh);
+                app.camera.uploadUBO();
+                app.frameIndex = 0;
+            }
+        }
         ImGui::SliderFloat("Saturation", &app.saturation, 0.5f, 2.0f);
 
         ImGui::SeparatorText("Denoiser (A-Trous)");
+        ImGui::Checkbox("Denoiser Enabled", &app.denoiseParams.enabled);
         ImGui::SliderFloat("Sigma Color", &app.denoiseParams.sigmaColor, 0.01f, 2.0f);
         ImGui::SliderFloat("Sigma Normal", &app.denoiseParams.sigmaNormal, 1.0f, 256.0f);
         ImGui::SliderFloat("Sigma Depth", &app.denoiseParams.sigmaDepth, 0.01f, 5.0f);
