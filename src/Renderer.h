@@ -26,7 +26,7 @@ public:
                            const LightingParams& lighting);
     void dispatchAccumulate(int frameIndex);
     void dispatchDenoise(const DenoiseParams& params);
-    void drawFullscreenQuad();
+    void drawFullscreenQuad(float exposure);
     void destroy();
 
     GLuint getOutputTexture() const;
@@ -79,6 +79,6 @@ private:
     } denoiseLoc_{};
 
     struct {
-        GLint texture;
+        GLint texture, exposure;
     } quadLoc_{};
 };

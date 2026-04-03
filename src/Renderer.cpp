@@ -154,7 +154,8 @@ void Renderer::init(int width, int height) {
     denoiseLoc_.invSigmaDepth= glGetUniformLocation(denoiseProgram_, "uInvSigmaDepth");
     denoiseLoc_.texelSize    = glGetUniformLocation(denoiseProgram_, "uTexelSize");
 
-    quadLoc_.texture = glGetUniformLocation(quadProgram_, "uTexture");
+    quadLoc_.texture  = glGetUniformLocation(quadProgram_, "uTexture");
+    quadLoc_.exposure = glGetUniformLocation(quadProgram_, "uExposure");
 }
 
 void Renderer::resize(int width, int height) {
@@ -281,12 +282,13 @@ GLuint Renderer::getOutputTexture() const {
     return lastOutputIsPing_ ? denoisePing_ : denoisePong_;
 }
 
-void Renderer::drawFullscreenQuad() {
+void Renderer::drawFullscreenQuad(float exposure) {
     glUseProgram(quadProgram_);
 
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, getOutputTexture());
     glUniform1i(quadLoc_.texture, 0);
+    glUniform1f(quadLoc_.exposure, exposure);
 
     glBindVertexArray(quadVAO_);
     glDrawArrays(GL_TRIANGLES, 0, 3);

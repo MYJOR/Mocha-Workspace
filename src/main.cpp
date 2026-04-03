@@ -21,6 +21,10 @@ static float smoothstepf(float edge0, float edge1, float x) {
     return t * t * (3.0f - 2.0f * t);
 }
 
+static float lerpf(float a, float b, float t) {
+    return a + (b - a) * t;
+}
+
 static void lerpVec3(float* out, const float* a, const float* b, float t) {
     for (int i = 0; i < 3; ++i) out[i] = a[i] + (b[i] - a[i]) * t;
 }
@@ -64,6 +68,18 @@ static void computeLighting(float azimuthDeg, float elevationDeg, LightingParams
     lerpVec3(lp.ambient,    tmpA, dayAmbient, dayFade);
 }
 
+static float computeTargetExposure(float elevationDeg) {
+    constexpr float nightExposure  = 3.0f;
+    constexpr float sunsetExposure = 1.6f;
+    constexpr float dayExposure    = 1.0f;
+
+    float horizonFade = smoothstepf(-10.0f, 0.0f, elevationDeg);
+    float dayFade     = smoothstepf(0.0f, 30.0f, elevationDeg);
+
+    float e = lerpf(nightExposure, sunsetExposure, horizonFade);
+    return lerpf(e, dayExposure, dayFade);
+}
+
 struct AppState {
     Camera camera;
     Renderer renderer;
@@ -78,6 +94,9 @@ struct AppState {
 
     float sunAzimuth   = 58.0f;
     float sunElevation = 52.0f;
+
+    float exposure       = 1.0f;
+    float targetExposure = 1.0f;
 
     int  frameIndex   = 0;
     bool needRegen    = true;
@@ -132,6 +151,8 @@ int main() {
     app.camera.uploadUBO();
     app.renderer.init(INIT_WIDTH, INIT_HEIGHT);
     computeLighting(app.sunAzimuth, app.sunElevation, app.lighting);
+    app.targetExposure = computeTargetExposure(app.sunElevation);
+    app.exposure       = app.targetExposure;
 
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
@@ -164,10 +185,15 @@ int main() {
         app.renderer.dispatchAccumulate(app.frameIndex);
         app.renderer.dispatchDenoise(app.denoiseParams);
 
+        constexpr float exposureSpeed = 5.0f;
+        float dt = ImGui::GetIO().DeltaTime;
+        app.exposure = lerpf(app.exposure, app.targetExposure,
+                             1.0f - std::exp(-exposureSpeed * dt));
+
         glBindFramebuffer(GL_FRAMEBUFFER, 0);
         glViewport(0, 0, fbW, fbH);
         glClear(GL_COLOR_BUFFER_BIT);
-        app.renderer.drawFullscreenQuad();
+        app.renderer.drawFullscreenQuad(app.exposure);
 
         ImGui_ImplOpenGL3_NewFrame();
         ImGui_ImplGlfw_NewFrame();
@@ -202,6 +228,7 @@ int main() {
         lightDirty |= ImGui::SliderFloat("Sun Elevation", &app.sunElevation, -10.0f, 90.0f);
         if (lightDirty) {
             computeLighting(app.sunAzimuth, app.sunElevation, app.lighting);
+            app.targetExposure = computeTargetExposure(app.sunElevation);
             app.frameIndex = 0;
         }
 
