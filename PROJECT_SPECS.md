@@ -3,7 +3,7 @@
 ## 1) Project Summary
 
 IsometricPathTracer is a real-time, GPU-driven isometric path tracing demo written in C++17 and OpenGL 4.1.  
-The application renders a procedural voxel-like terrain composed of axis-aligned cubes, applies temporal accumulation and A-Trous denoising, then displays the result with elevation-driven auto exposure, ACES tonemapping, and gamma correction.
+The application renders a procedural voxel-like terrain composed of axis-aligned cubes, supports sparse procedurally generated emissive terrain cubes with elevation-driven intensity, applies temporal accumulation and A-Trous denoising, then displays the result with elevation-driven auto exposure, ACES tonemapping, and gamma correction.
 
 Primary goals:
 
@@ -25,8 +25,7 @@ In scope:
 Out of scope:
 
 - Mesh/asset import pipeline.
-- Material system beyond per-cube albedo.
-- Advanced lighting models (MIS, emissive geometry, area lights).
+- Advanced lighting models (MIS, sampled area lights, complex emissive-light transport).
 - Distributed/network rendering.
 
 ## 3) Tech Stack and Dependencies
@@ -62,6 +61,7 @@ Linked targets:
   - Application lifecycle and render loop.
   - ImGui controls and change detection.
   - Derives target exposure from sun elevation and smooths display exposure over time.
+  - Delays emissive activation after terrain edits, then fades emissive intensity in after a short inactivity window.
   - Calls generation, tracing, accumulation, denoise, and present passes in order.
 
 - `src/Camera.h/.cpp`
@@ -70,6 +70,7 @@ Linked targets:
 
 - `src/ProceduralGen.h/.cpp`
   - Generates cube terrain using Perlin-based height values.
+  - Marks a sparse deterministic subset of top-surface cubes as emissive.
   - Builds a SAH-binned BVH on CPU.
   - Uploads cube data and BVH nodes to texture buffers for GPU traversal.
 
@@ -83,7 +84,7 @@ Linked targets:
 - `shaders/pathtrace.frag`
   - Primary path tracing pass.
   - BVH traversal for intersections and occlusion checks.
-  - Runtime sun direction plus elevation-driven sky and ambient lighting.
+  - Runtime sun direction plus elevation-driven sky, ambient, and emissive lighting.
   - Outputs:
     - color (`RGBA16F`)
     - packed normal (`RG16F` via oct encoding)
@@ -115,8 +116,9 @@ Per-frame pipeline:
 Notes:
 
 - Rendering is progressive: each frame adds one noisy sample per pixel and converges over time.
-- `frameIndex` is reset when scene, camera, or lighting changes to avoid ghosted accumulation.
+- `frameIndex` is reset when scene, camera, lighting, or effective emissive intensity changes to avoid ghosted accumulation.
 - Display exposure is derived from `sunElevation` on the CPU and adapts smoothly without adding a new reduction pass.
+- Emissive terrain lighting is suppressed during active terrain edits, then fades in after a short debounce delay.
 
 ## 7) Data Contracts
 
@@ -135,6 +137,7 @@ Each primitive is `CubeData`:
 - `bmin` (`vec4`, xyz used)
 - `bmax` (`vec4`, xyz used)
 - `albedo` (`vec4`, rgb used)
+- `emission` (`vec4`, rgb used, zero for non-emissive cubes)
 
 ### BVH node data (TBO)
 
@@ -165,6 +168,14 @@ Lighting:
 - Sun Elevation
 
 Note: changing `Sun Elevation` also updates the automatic display exposure target.
+
+Emissive:
+
+- Emissive Enabled
+- Emissive Density
+- Emissive Intensity
+- Debounce (s)
+- Fade In (s)
 
 Denoiser:
 
@@ -200,12 +211,14 @@ Run:
 - Denoiser bandwidth optimization: normals stored as `RG16F` via oct encoding.
 - API overhead reduction: uniform locations are cached during renderer initialization.
 - Temporal accumulation improves image quality stability at low per-frame sample counts.
+- Sparse deterministic emissive placement keeps geometry overhead low while debounce/fade logic avoids unnecessary visual churn during terrain edits.
 
 ## 11) Known Constraints
 
 - BVH traversal uses a fixed-size local stack in shader code.
 - Scene primitives are axis-aligned cubes only.
-- Lighting model is simple but configurable (sun direction/elevation, elevation-driven sky and ambient, elevation-driven auto exposure, diffuse bounce).
+- Lighting model is simple but configurable (sun direction/elevation, elevation-driven sky and ambient, elevation-driven auto exposure, sparse emissive terrain cubes, diffuse bounce).
+- Emissive cubes currently add radiance only when hit by traced rays; there is no dedicated direct-light sampling or MIS for emissive geometry.
 - No persistence/export of generated scenes.
 
 ## 12) Non-Functional Expectations
@@ -216,7 +229,7 @@ Run:
 
 ## 13) Future Extensions
 
-- Material variety (roughness/metalness/emission).
+- Material variety (roughness/metalness beyond the current albedo-plus-emission cube model).
 - Better GI sampling and direct-light strategies.
 - Better temporal stability and history clamping.
 - Alternative denoisers and quality presets.

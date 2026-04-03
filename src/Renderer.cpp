@@ -140,6 +140,7 @@ void Renderer::init(int width, int height) {
     ptLoc_.skyZenith   = glGetUniformLocation(ptProgram_, "uSkyZenith");
     ptLoc_.skyHorizon  = glGetUniformLocation(ptProgram_, "uSkyHorizon");
     ptLoc_.ambient     = glGetUniformLocation(ptProgram_, "uAmbient");
+    ptLoc_.emissiveIntensity = glGetUniformLocation(ptProgram_, "uEmissiveIntensity");
     ptLoc_.aoEnabled   = glGetUniformLocation(ptProgram_, "uAOEnabled");
     ptLoc_.aoStrength  = glGetUniformLocation(ptProgram_, "uAOStrength");
     ptLoc_.aoRadius    = glGetUniformLocation(ptProgram_, "uAORadius");
@@ -173,7 +174,8 @@ void Renderer::resize(int width, int height) {
 
 void Renderer::dispatchPathTrace(GLuint cameraUBO, GLuint cubeTBOTex, GLuint bvhTBOTex,
                                   int cubeCount, int frameIndex, unsigned int seed,
-                                  const LightingParams& lighting, const AOParams& ao) {
+                                  const LightingParams& lighting, const AOParams& ao,
+                                  float emissiveIntensity) {
     glBindFramebuffer(GL_FRAMEBUFFER, ptFBO_);
     glViewport(0, 0, width_, height_);
 
@@ -199,6 +201,8 @@ void Renderer::dispatchPathTrace(GLuint cameraUBO, GLuint cubeTBOTex, GLuint bvh
     glUniform3fv(ptLoc_.skyZenith,  1, lighting.skyZenith);
     glUniform3fv(ptLoc_.skyHorizon, 1, lighting.skyHorizon);
     glUniform3fv(ptLoc_.ambient,    1, lighting.ambient);
+
+    glUniform1f(ptLoc_.emissiveIntensity, emissiveIntensity);
 
     glUniform1i(ptLoc_.aoEnabled,   ao.enabled ? 1 : 0);
     glUniform1f(ptLoc_.aoStrength,  ao.strength);

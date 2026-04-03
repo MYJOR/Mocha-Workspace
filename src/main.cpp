@@ -80,6 +80,19 @@ static float computeTargetExposure(float elevationDeg) {
     return lerpf(e, dayExposure, dayFade);
 }
 
+static float computeEmissiveElevationFactor(float elevationDeg) {
+    float dayFade = smoothstepf(0.0f, 30.0f, elevationDeg);
+    return 1.0f - dayFade;
+}
+
+struct EmissiveParams {
+    bool  enabled       = true;
+    float density       = 0.02f;
+    float baseIntensity = 1.5f;
+    float debounceDelay = 0.25f;
+    float fadeDuration  = 0.4f;
+};
+
 struct AppState {
     Camera camera;
     Renderer renderer;
@@ -87,6 +100,7 @@ struct AppState {
     DenoiseParams denoiseParams;
     LightingParams lighting;
     AOParams aoParams;
+    EmissiveParams emissiveParams;
 
     int   gridSize    = 4;
     float noiseScale  = 0.12f;
@@ -99,6 +113,10 @@ struct AppState {
     float exposure       = 1.0f;
     float targetExposure = 1.0f;
     float saturation     = 1.15f;
+
+    float lastTerrainEditTime = -1.0f;
+    float emissiveBlend       = 0.0f;
+    float prevEmissiveIntensity = 0.0f;
 
     int  frameIndex   = 0;
     bool needRegen    = true;
@@ -166,7 +184,8 @@ int main() {
         glfwPollEvents();
 
         if (app.needRegen) {
-            app.procGen.generate(app.gridSize, app.noiseScale, app.heightScale, app.seed);
+            app.procGen.generate(app.gridSize, app.noiseScale, app.heightScale, app.seed,
+                                app.emissiveParams.density);
             app.procGen.uploadTBO();
             app.needRegen = false;
             app.frameIndex = 0;
@@ -176,20 +195,46 @@ int main() {
         glfwGetFramebufferSize(window, &fbW, &fbH);
         if (fbW == 0 || fbH == 0) continue;
 
+        float currentTime = static_cast<float>(glfwGetTime());
+        float dt = ImGui::GetIO().DeltaTime;
+
+        {
+            float targetBlend = 0.0f;
+            if (app.lastTerrainEditTime < 0.0f ||
+                (currentTime - app.lastTerrainEditTime) >= app.emissiveParams.debounceDelay) {
+                targetBlend = 1.0f;
+            }
+            float fadeSpeed = 1.0f / std::max(0.01f, app.emissiveParams.fadeDuration);
+            app.emissiveBlend = lerpf(app.emissiveBlend, targetBlend,
+                                      1.0f - std::exp(-fadeSpeed * dt));
+            if (std::abs(app.emissiveBlend - targetBlend) < 0.001f)
+                app.emissiveBlend = targetBlend;
+        }
+
+        float emissiveIntensity = 0.0f;
+        if (app.emissiveParams.enabled) {
+            float elevFactor = computeEmissiveElevationFactor(app.sunElevation);
+            emissiveIntensity = app.emissiveParams.baseIntensity * elevFactor * app.emissiveBlend;
+        }
+
+        if (std::abs(emissiveIntensity - app.prevEmissiveIntensity) > 0.001f) {
+            app.frameIndex = 0;
+            app.prevEmissiveIntensity = emissiveIntensity;
+        }
+
         app.frameIndex++;
         unsigned int frameSeed = static_cast<unsigned int>(app.frameIndex * 719393 + 1);
 
         app.renderer.dispatchPathTrace(
             app.camera.getUBO(), app.procGen.getTBOTex(), app.procGen.getBVHTBOTex(),
             app.procGen.getCubeCount(), app.frameIndex, frameSeed,
-            app.lighting, app.aoParams
+            app.lighting, app.aoParams, emissiveIntensity
         );
 
         app.renderer.dispatchAccumulate(app.frameIndex);
         app.renderer.dispatchDenoise(app.denoiseParams);
 
         constexpr float exposureSpeed = 5.0f;
-        float dt = ImGui::GetIO().DeltaTime;
         app.exposure = lerpf(app.exposure, app.targetExposure,
                              1.0f - std::exp(-exposureSpeed * dt));
 
@@ -207,10 +252,18 @@ int main() {
         ImGui::Begin("Path Tracer Settings");
 
         ImGui::SeparatorText("Scene Generation");
-        if (ImGui::SliderInt("Grid Size", &app.gridSize, 4, 48)) app.needRegen = true;
-        if (ImGui::SliderFloat("Noise Scale", &app.noiseScale, 0.01f, 0.5f)) app.needRegen = true;
-        if (ImGui::SliderFloat("Height Scale", &app.heightScale, 1.0f, 12.0f)) app.needRegen = true;
-        if (ImGui::SliderInt("Seed", &app.seed, 0, 1000)) app.needRegen = true;
+        {
+            bool terrainDirty = false;
+            terrainDirty |= ImGui::SliderInt("Grid Size", &app.gridSize, 4, 48);
+            terrainDirty |= ImGui::SliderFloat("Noise Scale", &app.noiseScale, 0.01f, 0.5f);
+            terrainDirty |= ImGui::SliderFloat("Height Scale", &app.heightScale, 1.0f, 12.0f);
+            terrainDirty |= ImGui::SliderInt("Seed", &app.seed, 0, 1000);
+            if (terrainDirty) {
+                app.needRegen = true;
+                app.lastTerrainEditTime = currentTime;
+                app.emissiveBlend = 0.0f;
+            }
+        }
         ImGui::Text("Cubes: %d", app.procGen.getCubeCount());
 
         ImGui::SeparatorText("Camera");
@@ -233,6 +286,21 @@ int main() {
             computeLighting(app.sunAzimuth, app.sunElevation, app.lighting);
             app.targetExposure = computeTargetExposure(app.sunElevation);
             app.frameIndex = 0;
+        }
+
+        ImGui::SeparatorText("Emissive");
+        {
+            bool emDirty = false;
+            emDirty |= ImGui::Checkbox("Emissive Enabled", &app.emissiveParams.enabled);
+            emDirty |= ImGui::SliderFloat("Emissive Density", &app.emissiveParams.density, 0.005f, 0.1f);
+            ImGui::SliderFloat("Emissive Intensity", &app.emissiveParams.baseIntensity, 0.1f, 5.0f);
+            ImGui::SliderFloat("Debounce (s)", &app.emissiveParams.debounceDelay, 0.05f, 1.0f);
+            ImGui::SliderFloat("Fade In (s)", &app.emissiveParams.fadeDuration, 0.05f, 2.0f);
+            if (emDirty) {
+                app.needRegen = true;
+                app.lastTerrainEditTime = currentTime;
+                app.emissiveBlend = 0.0f;
+            }
         }
 
         ImGui::SeparatorText("Ambient Occlusion");

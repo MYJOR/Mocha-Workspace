@@ -28,6 +28,8 @@ uniform vec3  uSkyZenith;
 uniform vec3  uSkyHorizon;
 uniform vec3  uAmbient;
 
+uniform float uEmissiveIntensity;
+
 uniform int   uAOEnabled;
 uniform float uAOStrength;
 uniform float uAORadius;
@@ -73,14 +75,16 @@ vec3 cosineWeightedHemisphere(vec3 normal) {
     return normalize(tangent * r * cos(theta) + bitangent * r * sin(theta) + normal * sqrt(1.0 - u1));
 }
 
-void fetchCube(int idx, out vec3 bmin, out vec3 bmax, out vec3 albedo) {
-    int base = idx * 3;
+void fetchCube(int idx, out vec3 bmin, out vec3 bmax, out vec3 albedo, out vec3 emission) {
+    int base = idx * 4;
     vec4 d0 = texelFetch(uCubeData, base + 0);
     vec4 d1 = texelFetch(uCubeData, base + 1);
     vec4 d2 = texelFetch(uCubeData, base + 2);
-    bmin   = d0.xyz;
-    bmax   = d1.xyz;
-    albedo = d2.xyz;
+    vec4 d3 = texelFetch(uCubeData, base + 3);
+    bmin     = d0.xyz;
+    bmax     = d1.xyz;
+    albedo   = d2.xyz;
+    emission = d3.xyz;
 }
 
 bool intersectAABB(vec3 ro, vec3 rd, vec3 bmin, vec3 bmax, out float tNear, out vec3 normal) {
@@ -112,6 +116,7 @@ struct HitInfo {
     float t;
     vec3  normal;
     vec3  albedo;
+    vec3  emission;
 };
 
 bool intersectAABBFast(vec3 ro, vec3 invRd, vec3 bmin, vec3 bmax, float tMax) {
@@ -153,16 +158,17 @@ HitInfo traceScene(vec3 ro, vec3 rd) {
         if (primCount > 0) {
             int primStart = floatBitsToInt(d0.w);
             for (int i = 0; i < primCount; ++i) {
-                vec3 cbmin, cbmax, alb;
-                fetchCube(primStart + i, cbmin, cbmax, alb);
+                vec3 cbmin, cbmax, alb, emi;
+                fetchCube(primStart + i, cbmin, cbmax, alb, emi);
                 float t;
                 vec3 n;
                 if (intersectAABB(ro, rd, cbmin, cbmax, t, n)) {
                     if (t > 0.001 && t < best.t) {
-                        best.hit    = true;
-                        best.t      = t;
-                        best.normal = n;
-                        best.albedo = alb;
+                        best.hit      = true;
+                        best.t        = t;
+                        best.normal   = n;
+                        best.albedo   = alb;
+                        best.emission = emi;
                     }
                 }
             }
@@ -201,8 +207,8 @@ bool occluded(vec3 ro, vec3 rd) {
         if (primCount > 0) {
             int primStart = floatBitsToInt(d0.w);
             for (int i = 0; i < primCount; ++i) {
-                vec3 cbmin, cbmax, alb;
-                fetchCube(primStart + i, cbmin, cbmax, alb);
+                vec3 cbmin, cbmax, alb, emi;
+                fetchCube(primStart + i, cbmin, cbmax, alb, emi);
                 float t;
                 vec3 n;
                 if (intersectAABB(ro, rd, cbmin, cbmax, t, n) && t > 0.001)
@@ -243,8 +249,8 @@ bool occludedWithinRadius(vec3 ro, vec3 rd, float maxDist) {
         if (primCount > 0) {
             int primStart = floatBitsToInt(d0.w);
             for (int i = 0; i < primCount; ++i) {
-                vec3 cbmin, cbmax, alb;
-                fetchCube(primStart + i, cbmin, cbmax, alb);
+                vec3 cbmin, cbmax, alb, emi;
+                fetchCube(primStart + i, cbmin, cbmax, alb, emi);
                 float t;
                 vec3 n;
                 if (intersectAABB(ro, rd, cbmin, cbmax, t, n) && t > 0.001 && t < maxDist)
@@ -312,6 +318,10 @@ void main() {
         if (bounce == 0) {
             firstNormal = hit.normal;
             firstDepth  = hit.t;
+        }
+
+        if (uEmissiveIntensity > 0.0 && dot(hit.emission, hit.emission) > 0.0) {
+            color += throughput * min(hit.emission * uEmissiveIntensity, vec3(8.0));
         }
 
         vec3 shadowOrigin = hitPos + hit.normal * 0.002;

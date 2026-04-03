@@ -30,7 +30,8 @@ public:
     void resize(int width, int height);
     void dispatchPathTrace(GLuint cameraUBO, GLuint cubeTBOTex, GLuint bvhTBOTex,
                            int cubeCount, int frameIndex, unsigned int seed,
-                           const LightingParams& lighting, const AOParams& ao);
+                           const LightingParams& lighting, const AOParams& ao,
+                           float emissiveIntensity);
     void dispatchAccumulate(int frameIndex);
     void dispatchDenoise(const DenoiseParams& params);
     void drawFullscreenQuad(float exposure, float saturation);
@@ -74,6 +75,7 @@ private:
     struct {
         GLint cubeData, bvhData, cubeCount, frameIndex, seed, resolution;
         GLint sunDir, sunColor, skyZenith, skyHorizon, ambient;
+        GLint emissiveIntensity;
         GLint aoEnabled, aoStrength, aoRadius, aoSamples;
     } ptLoc_{};
 

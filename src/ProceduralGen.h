@@ -4,9 +4,10 @@
 #include <glad/glad.h>
 
 struct CubeData {
-    glm::vec4 bmin;   // xyz = min corner
-    glm::vec4 bmax;   // xyz = max corner
-    glm::vec4 albedo; // rgb color
+    glm::vec4 bmin;     // xyz = min corner
+    glm::vec4 bmax;     // xyz = max corner
+    glm::vec4 albedo;   // rgb color
+    glm::vec4 emission; // rgb base emission color, zero for non-emissive
 };
 
 struct BVHNodeGPU {
@@ -16,7 +17,8 @@ struct BVHNodeGPU {
 
 class ProceduralGen {
 public:
-    void generate(int gridSize, float noiseScale, float heightScale, int seed);
+    void generate(int gridSize, float noiseScale, float heightScale, int seed,
+                  float emissiveDensity = 0.02f);
     void uploadTBO();
     GLuint getTBO() const { return tbo_; }
     GLuint getTBOTex() const { return tboTex_; }

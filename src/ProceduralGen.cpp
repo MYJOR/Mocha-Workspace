@@ -20,11 +20,20 @@ static float surfaceArea(glm::vec3 mn, glm::vec3 mx) {
     return 2.0f * (d.x * d.y + d.y * d.z + d.z * d.x);
 }
 
-void ProceduralGen::generate(int gridSize, float noiseScale, float heightScale, int seed) {
+static uint32_t emissiveHash(int x, int z, int seed) {
+    uint32_t h = uint32_t(x * 374761393 + z * 668265263 + seed * 1274126177);
+    h = (h ^ (h >> 13)) * 1103515245u;
+    h = h ^ (h >> 16);
+    return h;
+}
+
+void ProceduralGen::generate(int gridSize, float noiseScale, float heightScale, int seed,
+                             float emissiveDensity) {
     cubes_.clear();
 
     float offset = float(seed) * 17.31f;
     float halfGrid = float(gridSize) / 2.0f;
+    uint32_t densityThreshold = uint32_t(emissiveDensity * 4294967295.0f);
 
     for (int x = 0; x < gridSize; ++x) {
         for (int z = 0; z < gridSize; ++z) {
@@ -38,6 +47,8 @@ void ProceduralGen::generate(int gridSize, float noiseScale, float heightScale, 
             if (combined < -0.1f) continue;
 
             int height = std::max(1, int((combined + 0.5f) * heightScale));
+
+            bool isEmissiveColumn = emissiveHash(x, z, seed) < densityThreshold;
 
             for (int y = 0; y < height; ++y) {
                 CubeData cube{};
@@ -59,6 +70,11 @@ void ProceduralGen::generate(int gridSize, float noiseScale, float heightScale, 
                     cube.albedo = glm::vec4(grassR, grassG, grassB, 1.0f);
                 } else {
                     cube.albedo = glm::vec4(0.55f, 0.38f, 0.22f, 1.0f);
+                }
+
+                cube.emission = glm::vec4(0.0f);
+                if (isEmissiveColumn && y == height - 1) {
+                    cube.emission = glm::vec4(1.0f, 0.7f, 0.3f, 1.0f);
                 }
 
                 cubes_.push_back(cube);
