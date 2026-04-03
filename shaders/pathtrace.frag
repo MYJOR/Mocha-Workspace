@@ -28,6 +28,11 @@ uniform vec3  uSkyZenith;
 uniform vec3  uSkyHorizon;
 uniform vec3  uAmbient;
 
+uniform int   uAOEnabled;
+uniform float uAOStrength;
+uniform float uAORadius;
+uniform int   uAOSamples;
+
 vec2 octEncode(vec3 n) {
     n /= (abs(n.x) + abs(n.y) + abs(n.z));
     if (n.z < 0.0) {
@@ -213,6 +218,59 @@ bool occluded(vec3 ro, vec3 rd) {
     return false;
 }
 
+bool occludedWithinRadius(vec3 ro, vec3 rd, float maxDist) {
+    if (uCubeCount == 0) return false;
+
+    vec3 invRd = 1.0 / rd;
+    int stack[32];
+    int stackTop = 0;
+    stack[stackTop++] = 0;
+
+    while (stackTop > 0) {
+        int nodeIdx = stack[--stackTop];
+        int base = nodeIdx * 2;
+        vec4 d0 = texelFetch(uBVHData, base);
+        vec4 d1 = texelFetch(uBVHData, base + 1);
+
+        vec3 bmin = d0.xyz;
+        vec3 bmax = d1.xyz;
+
+        if (!intersectAABBFast(ro, invRd, bmin, bmax, maxDist))
+            continue;
+
+        int primCount = floatBitsToInt(d1.w);
+
+        if (primCount > 0) {
+            int primStart = floatBitsToInt(d0.w);
+            for (int i = 0; i < primCount; ++i) {
+                vec3 cbmin, cbmax, alb;
+                fetchCube(primStart + i, cbmin, cbmax, alb);
+                float t;
+                vec3 n;
+                if (intersectAABB(ro, rd, cbmin, cbmax, t, n) && t > 0.001 && t < maxDist)
+                    return true;
+            }
+        } else {
+            int rightChild = floatBitsToInt(d0.w);
+            int leftChild  = nodeIdx + 1;
+            stack[stackTop++] = rightChild;
+            stack[stackTop++] = leftChild;
+        }
+    }
+    return false;
+}
+
+float computeAO(vec3 hitPos, vec3 normal) {
+    vec3 origin = hitPos + normal * 0.002;
+    int blocked = 0;
+    for (int i = 0; i < uAOSamples; ++i) {
+        vec3 dir = cosineWeightedHemisphere(normal);
+        if (occludedWithinRadius(origin, dir, uAORadius))
+            blocked++;
+    }
+    return 1.0 - float(blocked) / float(uAOSamples);
+}
+
 vec3 skyGradient(vec3 rd) {
     float t = 0.5 * (rd.y + 1.0);
     return mix(uSkyHorizon, uSkyZenith, t);
@@ -262,7 +320,13 @@ void main() {
             color += throughput * hit.albedo * uSunColor * nDotL;
         }
 
-        color += throughput * hit.albedo * uAmbient;
+        float aoFactor = 1.0;
+        if (bounce == 0 && uAOEnabled != 0) {
+            float ao = computeAO(hitPos, hit.normal);
+            aoFactor = mix(1.0, ao, uAOStrength);
+        }
+
+        color += throughput * hit.albedo * uAmbient * aoFactor;
 
         throughput *= hit.albedo;
 

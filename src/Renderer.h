@@ -17,13 +17,20 @@ struct LightingParams {
     float ambient[3]    = {0.15f, 0.18f, 0.25f};
 };
 
+struct AOParams {
+    bool  enabled  = true;
+    float strength = 0.5f;
+    float radius   = 0.5f;
+    int   samples  = 4;
+};
+
 class Renderer {
 public:
     void init(int width, int height);
     void resize(int width, int height);
     void dispatchPathTrace(GLuint cameraUBO, GLuint cubeTBOTex, GLuint bvhTBOTex,
                            int cubeCount, int frameIndex, unsigned int seed,
-                           const LightingParams& lighting);
+                           const LightingParams& lighting, const AOParams& ao);
     void dispatchAccumulate(int frameIndex);
     void dispatchDenoise(const DenoiseParams& params);
     void drawFullscreenQuad(float exposure, float saturation);
@@ -67,6 +74,7 @@ private:
     struct {
         GLint cubeData, bvhData, cubeCount, frameIndex, seed, resolution;
         GLint sunDir, sunColor, skyZenith, skyHorizon, ambient;
+        GLint aoEnabled, aoStrength, aoRadius, aoSamples;
     } ptLoc_{};
 
     struct {

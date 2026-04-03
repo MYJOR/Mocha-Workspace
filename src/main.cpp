@@ -86,6 +86,7 @@ struct AppState {
     ProceduralGen procGen;
     DenoiseParams denoiseParams;
     LightingParams lighting;
+    AOParams aoParams;
 
     int   gridSize    = 4;
     float noiseScale  = 0.12f;
@@ -180,7 +181,8 @@ int main() {
 
         app.renderer.dispatchPathTrace(
             app.camera.getUBO(), app.procGen.getTBOTex(), app.procGen.getBVHTBOTex(),
-            app.procGen.getCubeCount(), app.frameIndex, frameSeed, app.lighting
+            app.procGen.getCubeCount(), app.frameIndex, frameSeed,
+            app.lighting, app.aoParams
         );
 
         app.renderer.dispatchAccumulate(app.frameIndex);
@@ -232,6 +234,14 @@ int main() {
             app.targetExposure = computeTargetExposure(app.sunElevation);
             app.frameIndex = 0;
         }
+
+        ImGui::SeparatorText("Ambient Occlusion");
+        bool aoDirty = false;
+        aoDirty |= ImGui::Checkbox("AO Enabled", &app.aoParams.enabled);
+        aoDirty |= ImGui::SliderFloat("AO Strength", &app.aoParams.strength, 0.0f, 1.0f);
+        aoDirty |= ImGui::SliderFloat("AO Radius", &app.aoParams.radius, 0.05f, 2.0f);
+        aoDirty |= ImGui::SliderInt("AO Samples", &app.aoParams.samples, 1, 16);
+        if (aoDirty) app.frameIndex = 0;
 
         ImGui::SeparatorText("Display");
         ImGui::SliderFloat("Saturation", &app.saturation, 0.5f, 2.0f);
